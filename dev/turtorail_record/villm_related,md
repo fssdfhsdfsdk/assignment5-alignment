@@ -1,0 +1,43 @@
+
+
+# 【讲解】01
+
+```
+    world_size_patch = patch("torch.distributed.get_world_size", return_value=1)
+    profiling_patch = patch(
+        "vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling", return_value=None
+    )
+    with world_size_patch, profiling_patch:
+```
+
+这两行代码使用了 Python 的 `unittest.mock.patch` 工具，目的是在不修改 vLLM 源码的情况下，强制改变其内部函数的行为。
+这在处理复杂的分布式框架（如 vLLM）时非常常见，主要作用如下：
+
+1\. `world_size_patch` (欺骗分布式检查)
+
+```
+patch("torch.distributed.get_world_size", return_value=1)
+
+```
+
+-   作用：强制让程序认为当前只使用了 1 张显卡。
+-   为什么要这么做：vLLM 在启动时会检查分布式环境。如果你的运行环境（比如某些容器或集群）配置了多卡变量，但你只想单卡运行，vLLM 可能会因为找不到其他节点而报错。通过这个 `patch`，可以让 vLLM 乖乖地按照单机单卡模式启动。
+
+2\. `profiling_patch` (跳过显存预测检查)
+
+
+```
+patch("vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling", return_value=None)
+
+```
+
+-   作用：强行关闭 vLLM 在"预热（Profiling）"阶段的一个断言检查。
+-   为什么要这么做：vLLM 启动时会跑一遍模型来测试显存占用情况。在某些显卡（如 V100）或特定的 CUDA 环境下，这个"内存足迹增长"的检测逻辑可能会因为微小的计算波动或驱动特性而报错，导致程序崩溃。
+-   效果：通过将该函数 `return_value` 设为 `None`，相当于直接让这个检查"失效"，不管内存怎么变都让它顺利通过。
+
+
+总结
+
+
+这两行是为了提高环境兼容性的"黑科技"。它们确保了在 Stanford CS336 这种特定的作业环境或 V100 这种较旧的硬件上，vLLM 能绕过一些严苛的初始化检查，成功跑起来。
+你现在的报错解决了吗？如果 Triton 错误还在，可能需要尝试设置 `export VLLM_ATTENTION_BACKEND=XFORMERS`。
